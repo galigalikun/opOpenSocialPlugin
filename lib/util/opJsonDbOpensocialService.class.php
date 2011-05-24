@@ -36,6 +36,16 @@ class opJsonDbOpensocialService implements ActivityService, PersonService, AppDa
 
   public function getPeople($userId, $groupId, CollectionOptions $options, $fields, SecurityToken $token)
   {
+    $conn = Doctrine_Manager::connection();
+
+    $viewer = (!$token->isAnonymous()) ? Doctrine::getTable('Member')->find($token->getViewerId()) : null;
+
+    $result = $conn->fetchAll(
+      'SELECT COUNT(*) AS count FROM application a WHERE a.id = ?',
+      array($token->getAppId())
+    );
+    $applicationExists = $result[0]['count'] == 1;
+
     $ids = $this->getIdSet($userId, $groupId, $token);
     $first = $this->fixStartIndex($options->getStartIndex());
     $max   = $this->fixCount($options->getCount());
@@ -59,24 +69,64 @@ class opJsonDbOpensocialService implements ActivityService, PersonService, AppDa
           $ids = array();
         }
       }
-    }
 
-    if (count($ids))
-    {
-      $query = Doctrine::getTable('Member')->createQuery()->whereIn('id', $ids);
+      $profileIds = Doctrine::getTable('Profile')->createQuery()
+        ->select('id')
+        ->whereIn('name', array('op_preset_sex'))
+        ->execute(array(), Doctrine::HYDRATE_NONE);
 
-      $totalSize = $query->count();
+      array_walk($profileIds, create_function('&$value, $key', '$value = (int)array_shift($value);'));
 
-      $query->orderBy('id');
-      $query->offset($first);
-      $query->limit($max);
+      $query = 'SELECT COUNT(*) AS count'
+             . ' FROM member m'
+             . ' WHERE m.id IN ('.implode(',', $ids).') AND (m.is_active = \'1\' OR m.is_active IS NULL)';
+      $result = $conn->fetchAll($query);
+      $totalSize = $result[0]['count'];
 
-      $members = $query->execute();
+      $query = 'SELECT m.id AS m__id, m.name AS m__name,'
+             . '  mp.profile_id AS mp__profile_id, mp.value AS mp__value, mp.public_flag AS mp__public_flag,'
+             . '  mi.file_id AS mi__file_id,'
+             . '  mr.member_id_to AS mr__member_id_to, mr.is_friend AS mr__is_friend, mr.is_access_block AS mr__is_access_block,'
+             . '  ma.application_id AS ma__application_id'
+             . ' FROM member m'
+             . ' LEFT JOIN member_profile mp ON m.id = mp.member_id AND mp.profile_id IN ('.implode(',', $profileIds).')'
+             . ' LEFT JOIN member_image mi ON m.id = mi.member_id'
+             . ' LEFT JOIN member_relationship mr ON m.id = mr.member_id_from AND mr.member_id_to = ?'
+             . ' LEFT JOIN member_application ma ON m.id = ma.member_id AND ma.application_id = ?'
+             . ' WHERE m.id IN ('.implode(',', $ids).') AND (m.is_active = \'1\' OR m.is_active IS NULL)'
+             . ' ORDER BY m.id'
+             . ' LIMIT '.((int)$max)
+             . ' OFFSET '.((int)$first);
+
+      $queryParams = array((int)$viewer->id, $token->getAppId());
+
+      $members = array();
+      foreach ($conn->fetchAll($query, $queryParams) as $row)
+      {
+        $members[] = array(
+          'id' => $row['m__id'],
+          'name' => $row['m__name'],
+          'MemberProfile' => array(array(
+            'profile_id' => $row['mp__profile_id'],
+            'value' => $row['mp__value'],
+            'public_flag' => (int)$row['mp__public_flag'],
+          )),
+          'MemberImage' => array(
+            'file_id' => $row['mi__file_id'],
+          ),
+          'MemberRelationship' => array(
+            'member_id_to' => $row['mr__member_id_to'],
+            'is_friend' => $row['mr__is_friend'] === '1',
+            'is_access_block' => $row['mr__is_access_block'] === '1',
+          ),
+          'MemberApplication' => array(
+            'application_id' => $row['ma__application_id'],
+          ),
+        );
+      }
     }
 
     $people = array();
-    $viewer = (!$token->isAnonymous()) ? Doctrine::getTable('Member')->find($token->getViewerId()) : null;
-    $application = ($token->getAppId()) ? Doctrine::getTable('Application')->find($token->getAppId()): null;
 
     $export = new opOpenSocialProfileExport();
     $export->setViewer($viewer);
@@ -84,12 +134,12 @@ class opJsonDbOpensocialService implements ActivityService, PersonService, AppDa
     foreach ($members as $member)
     {
       $p = array();
-      $p['id']       =  $member->getId();
-      $p['isOwner']  =  (!$token->isAnonymous() && $member->getId() == $token->getOwnerId()) ? true : false;
-      $p['isViewer'] =  (!$token->isAnonymous() && $member->getId() == $token->getViewerId()) ? true : false;
-      if ($application)
+      $p['id']       =  $member['id'];
+      $p['isOwner']  =  (!$token->isAnonymous() && $member['id'] == $token->getOwnerId()) ? true : false;
+      $p['isViewer'] =  (!$token->isAnonymous() && $member['id'] == $token->getViewerId()) ? true : false;
+      if ($applicationExists)
       {
-        $p['hasApp'] = $application->isHadByMember($member->getId());
+        $p['hasApp'] = !empty($member['MemberApplication']['application_id']);
       }
       $export->member = $member;
       $people[] = $p + $export->getData($fields);

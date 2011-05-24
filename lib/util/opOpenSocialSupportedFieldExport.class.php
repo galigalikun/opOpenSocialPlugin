@@ -23,17 +23,22 @@ class opOpenSocialSupportedFieldExport
 
   protected function getGetterMethodName($key)
   {
-    return 'getSupportedFields'.sfInflector::camelize($key);
+    return 'getSupportedFields'.ucfirst($key);
   }
 
   protected function isExistProfile($name)
   {
-    return (bool)Doctrine::getTable('Profile')->findOneByName($name);
+    static $isExist = array();
+    if (!isset($isExist[$name]))
+    {
+      $isExist[$name] = (bool)Doctrine::getTable('Profile')->findOneByName($name);
+    }
+    return $isExist[$name];
   }
 
   public function getIsSupportedMethodName($key)
   {
-    return 'isSupported'.sfInflector::camelize($key);
+    return 'isSupported'.ucfirst($key);
   }
 
   public function __construct(opOpenSocialProfileExport $export)

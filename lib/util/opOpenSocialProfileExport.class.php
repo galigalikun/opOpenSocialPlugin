@@ -29,7 +29,7 @@ class opOpenSocialProfileExport extends opProfileExport
     'addresses'      => 'addresses',
     'aboutMe'        => 'op_preset_self_introduction',
     'gender'         => 'op_preset_sex',
-    'age'            => 'age',
+// 'age' is not working now
     'phoneNumbers'   => 'op_preset_telephone_number',
     'birthday'       => 'op_preset_birthday',
     'languagesSpoken'=> 'language',
@@ -66,7 +66,24 @@ class opOpenSocialProfileExport extends opProfileExport
 
   protected function getProfile($name)
   {
-    $profile = $this->member->getProfile($name);
+    static $profileIds = array();
+    if (!isset($profileIds[$name]))
+    {
+      $profileIds[$name] = Doctrine::getTable('Profile')->createQuery()
+        ->addWhere('name = ?', $name)
+        ->fetchOne()->id;
+    }
+
+    $profileId = $profileIds[$name];
+
+    foreach ($this->member['MemberProfile'] as $memberProfile)
+    {
+      if ($memberProfile['profile_id'] === $profileId)
+      {
+        $profile = $memberProfile;
+        break;
+      }
+    }
 
     if (!$profile)
     {
@@ -75,21 +92,45 @@ class opOpenSocialProfileExport extends opProfileExport
 
     if (null !== $this->viewer)
     {
-      if ($this->member->getId() !== $this->viewer->getId()
-        && !$profile->isViewable($this->viewer->getId()))
+      $viewerId = $this->viewer->id;
+      switch ($profile['public_flag'])
+      {
+        case ProfileTable::PUBLIC_FLAG_FRIEND:
+          $relation = $this->member['MemberRelationship'];
+          if (!empty($relation['member_id_to']) && $relation['is_friend'])
+          {
+            $isViewable = true;
+          }
+          else
+          {
+            $isViewable = ($this->member['id'] === $viewerId);
+          }
+          break;
+        case ProfileTable::PUBLIC_FLAG_PRIVATE:
+          $isViewable = false;
+          break;
+        case ProfileTable::PUBLIC_FLAG_SNS:
+          $isViewable = true;
+          break;
+        default:
+          $isViewable = false;
+          break;
+      }
+
+      if ($viewerId !== $this->member['id'] && !$isViewable)
       {
         return '';
       }
     }
     else
     {
-      if ($profile->getPublicFlag() !== 0)
+      if ($profile['public_flag'] !== 0)
       {
         return '';
       }
     }
 
-    return (string)$profile;
+    return (string)$profile['value'];
   }
 
   public function __call($name, $arguments)
@@ -105,7 +146,7 @@ class opOpenSocialProfileExport extends opProfileExport
       }
       elseif (in_array($key, $this->names))
       {
-        return $this->member->getName();
+        return $this->member['name'];
       }
       elseif (in_array($key, $this->emails))
       {
@@ -117,7 +158,7 @@ class opOpenSocialProfileExport extends opProfileExport
       }
       elseif (in_array($key, $this->configs))
       {
-        return $this->member->getConfig($this->tableToOpenPNE[$key]);
+        return Doctrine::getTable('MemberConfig')->getValue($this->member['id'], $this->tableToOpenPNE[$key]);
       }
     }
 
@@ -139,18 +180,20 @@ class opOpenSocialProfileExport extends opProfileExport
     // check access block
     if ($this->viewer)
     {
-      $relation = Doctrine::getTable('MemberRelationship')->retrieveByFromAndTo($this->member->getId(), $this->viewer->getId());
+      $relation = $this->member['MemberRelationship'];
 
-      if ($relation && $relation->getIsAccessBlock())
+      if (!empty($relation['member_id_to']) && $relation['is_access_block'])
       {
         $isBlock = true;
       }
     }
 
-    foreach ($this->tableToOpenPNE as $k => $v)
+    $tableToOpenPNE = array_intersect_key($this->tableToOpenPNE, array_flip($allowed));
+
+    foreach ($tableToOpenPNE as $k => $v)
     {
       $checkSupportMethodName = $this->getSupportedFieldExport()->getIsSupportedMethodName($k);
-      if (in_array($k, $allowed) && $this->getSupportedFieldExport()->$checkSupportMethodName())
+      if ($this->getSupportedFieldExport()->$checkSupportMethodName())
       {
         if ($isBlock)
         {
@@ -274,18 +317,19 @@ class opOpenSocialProfileExport extends opProfileExport
   public function getThumbnailUrl()
   {
     sfContext::getInstance()->getConfiguration()->loadHelpers(array('Asset', 'sfImage'));
+    $image = $this->member['MemberImage'];
 
-    if ($this->member->getImage())
+    if (!empty($image['file_id']))
     {
-      return sf_image_path($this->member->getImageFileName(), array(), true);
+      $file = Doctrine::getTable('File')->find($image['file_id']);
+      return sf_image_path($file, array(), true);
     }
     return '';
   }
 
   public function getProfileUrl()
   {
-    return sfContext::getInstance()->getConfiguration()
-      ->generateAppUrl('pc_frontend', array('sf_route' => 'obj_member_profile', 'id' => $this->member->id), true);
+    return sfConfig::get('op_base_url').'/member/'.$this->member['id'];
   }
 
   public function getLanguagesSpoken()
