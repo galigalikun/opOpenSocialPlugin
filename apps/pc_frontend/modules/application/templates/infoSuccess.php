@@ -71,7 +71,7 @@ op_include_parts('listBox', 'AuthorInfoList', array('title' => __('About Author'
 
 <?php
 $developerInfoList = array(
-  __('Gadget XML') => $application->getUrl(),
+  __('Gadget XML') => link_to($application->getUrl(), $application->getUrl(), array('popup' => true)),
   __('App Type') => implode(', ', $application->getApplicationTypes()->getRawValue()),
   __('Update App Info') => get_slot('update_button'),
   __('Delete App') => button_to(__('Delete'), '@application_delete?id='.$application->getId()),

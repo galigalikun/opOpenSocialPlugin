@@ -9,7 +9,8 @@
 </div>
 <div class="info">
 <?php echo __('Do you wish to install this App?') ?><br>
-<?php echo __('The App might use your profile and your %friend% information.', array('%friend%' => $op_term['friend']->pluralize())) ?>
+<?php echo __('The App might use your profile and your %friend% information.', array('%friend%' => $op_term['friend']->pluralize())) ?><br>
+<?php echo link_to(__('View source'), $application->getUrl(), array('popup' => true)) ?>
 </div>
 </div>
 <div style="clear: both;">&nbsp;</div>
